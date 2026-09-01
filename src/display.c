@@ -111,26 +111,35 @@ void display_list_gpus(void) {
         gpu_get_name(device, name, sizeof(name));
 
         int num_fans = fan_get_count(device);
-        printf("  GPU %u: %s (%d fan%s)\n", i, name, num_fans,
-               num_fans != 1 ? "s" : "");
+        if (num_fans < 0)
+            printf("  GPU %u: %s (fan count unavailable)\n", i, name);
+        else
+            printf("  GPU %u: %s (%d fan%s)\n", i, name, num_fans,
+                   num_fans != 1 ? "s" : "");
     }
 }
 
-void display_fan_curve(void) {
-    FanCurve *curve = curve_read();
-    if (curve) {
-        printf("Current fan curve:\n");
-        printf("+--------------+-----------------+\n");
-        printf("| Temperature  | Fan Speed       |\n");
-        printf("+--------------+-----------------+\n");
-        for (int i = 0; i < curve->point_count; i++) {
-            printf("| %6d °C    | %6d %%        |\n",
-                   curve->points[i].temperature,
-                   curve->points[i].fan_speed);
-        }
-        printf("+--------------+-----------------+\n");
-        free(curve);
-    } else {
-        printf("Fan curve is not set. Use 'nvfd curve reset' to create default.\n");
+int display_fan_curve(void) {
+    FanCurve curve;
+    CurveStatus status = curve_load(&curve);
+    if (status == CURVE_INVALID) {
+        fprintf(stderr, "%s\n", curve_last_error());
+        return -1;
     }
+    if (status == CURVE_MISSING) {
+        printf("Fan curve is not set. Use 'nvfd curve reset' to create default.\n");
+        return 0;
+    }
+
+    printf("Current fan curve:\n");
+    printf("+--------------+-----------------+\n");
+    printf("| Temperature  | Fan Speed       |\n");
+    printf("+--------------+-----------------+\n");
+    for (int i = 0; i < curve.point_count; i++) {
+        printf("| %6d °C    | %6d %%        |\n",
+               curve.points[i].temperature,
+               curve.points[i].fan_speed);
+    }
+    printf("+--------------+-----------------+\n");
+    return 0;
 }

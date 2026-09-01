@@ -1,3 +1,4 @@
+#include <ctype.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,12 +20,15 @@ static int compare_points(const void *a, const void *b) {
            ((const FanCurvePoint *)b)->temperature;
 }
 
-/* A curve key must be a whole number of degrees, 0-100, with nothing else. */
+/* A curve key must be a whole number of degrees, 0-100, with nothing else:
+ * no sign, no leading whitespace (strtol would accept both). */
 static int parse_temperature(const char *key, int *out) {
+    if (!isdigit((unsigned char)key[0]))
+        return -1;
     char *end;
     errno = 0;
     long v = strtol(key, &end, 10);
-    if (errno != 0 || end == key || *end != '\0' || v < 0 || v > 100)
+    if (errno != 0 || *end != '\0' || v < 0 || v > 100)
         return -1;
     *out = (int)v;
     return 0;
@@ -41,7 +45,7 @@ CurveStatus curve_load(FanCurve *curve) {
     }
 
     json_error_t error;
-    json_t *root = json_load_file(NVFD_CURVE_FILE, 0, &error);
+    json_t *root = json_load_file(NVFD_CURVE_FILE, JSON_REJECT_DUPLICATES, &error);
     if (!root) {
         snprintf(last_error, sizeof(last_error), "%s: %s (line %d, column %d)",
                  NVFD_CURVE_FILE, error.text, error.line, error.column);
@@ -126,6 +130,20 @@ FanCurve *curve_read(void) {
         fprintf(stderr, "%s\n", last_error);
     free(curve);
     return NULL;
+}
+
+int curve_require(FanCurve *curve) {
+    CurveStatus status = curve_load(curve);
+    if (status == CURVE_MISSING) {
+        fprintf(stderr, "%s does not exist; run 'nvfd curve reset' to create it.\n",
+                NVFD_CURVE_FILE);
+        return -1;
+    }
+    if (status == CURVE_INVALID) {
+        fprintf(stderr, "%s\n", last_error);
+        return -1;
+    }
+    return 0;
 }
 
 int curve_write(const FanCurve *curve) {
@@ -249,16 +267,8 @@ int curve_interpolate(int temp, const FanCurve *curve) {
 
 int curve_apply_to_gpu(unsigned int gpu_index) {
     FanCurve curve;
-    CurveStatus status = curve_load(&curve);
-    if (status == CURVE_MISSING) {
-        fprintf(stderr, "%s does not exist; run 'nvfd curve reset' to create it.\n",
-                NVFD_CURVE_FILE);
+    if (curve_require(&curve) != 0)
         return -1;
-    }
-    if (status == CURVE_INVALID) {
-        fprintf(stderr, "%s\n", last_error);
-        return -1;
-    }
 
     nvmlDevice_t device;
     if (gpu_get_handle(gpu_index, &device) != 0)
@@ -271,22 +281,4 @@ int curve_apply_to_gpu(unsigned int gpu_index) {
     }
 
     return fan_set_gpu_speed(gpu_index, (unsigned int)curve_interpolate(temp, &curve));
-}
-
-int curve_default_interpolate(int temp) {
-    if (temp < 30) return 30;
-    if (temp >= 75) return 100;
-
-    int temps[]  = {30, 40, 50, 60, 70, 75};
-    int speeds[] = {30, 40, 55, 70, 90, 100};
-    int n = 6;
-
-    for (int i = 0; i < n - 1; i++) {
-        if (temp >= temps[i] && temp < temps[i + 1]) {
-            float slope = (float)(speeds[i + 1] - speeds[i]) /
-                          (float)(temps[i + 1] - temps[i]);
-            return speeds[i] + (int)(slope * (float)(temp - temps[i]));
-        }
-    }
-    return 100;
 }

@@ -4,6 +4,7 @@
 #include <sys/stat.h>
 #include <errno.h>
 #include "config.h"
+#include "fan.h"
 
 static char last_error[512];
 
@@ -33,7 +34,7 @@ json_t *config_read(void) {
     }
 
     json_error_t error;
-    json_t *root = json_load_file(NVFD_CONFIG_FILE, 0, &error);
+    json_t *root = json_load_file(NVFD_CONFIG_FILE, JSON_REJECT_DUPLICATES, &error);
     if (!root) {
         snprintf(last_error, sizeof(last_error), "%s: %s (line %d, column %d)",
                  NVFD_CONFIG_FILE, error.text, error.line, error.column);
@@ -135,13 +136,22 @@ int config_migrate(void) {
             } else if (strcmp(buf, "curve") == 0) {
                 json_object_set_new(gpu_config, "mode", json_string("curve"));
             } else {
-                int speed = atoi(buf);
-                if (speed >= 0 && speed <= 100) {
-                    json_object_set_new(gpu_config, "mode", json_string("manual"));
-                    json_object_set_new(gpu_config, "speed", json_integer(speed));
-                } else {
-                    json_object_set_new(gpu_config, "mode", json_string("auto"));
+                /* Only write a manual speed the daemon will accept; anything
+                 * else is an error to fix by hand, not something to guess at. */
+                char *end;
+                long speed = strtol(buf, &end, 10);
+                if (end == buf || *end != '\0' ||
+                    speed < FAN_SPEED_MIN || speed > FAN_SPEED_MAX) {
+                    fprintf(stderr, "%s: cannot migrate value \"%s\" (expected auto, "
+                                    "curve, or a speed %d-%d); remove the file or fix it\n",
+                            NVFD_OLD_CONFIG_FILE, buf, FAN_SPEED_MIN, FAN_SPEED_MAX);
+                    json_decref(gpu_config);
+                    json_decref(root);
+                    fclose(fp);
+                    return -1;
                 }
+                json_object_set_new(gpu_config, "mode", json_string("manual"));
+                json_object_set_new(gpu_config, "speed", json_integer(speed));
             }
 
             json_object_set_new(root, "gpu0", gpu_config);

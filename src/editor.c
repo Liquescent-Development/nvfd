@@ -504,10 +504,8 @@ int editor_run(void) {
      * silently start from the default and overwrite it on save. */
     FanCurve loaded;
     CurveStatus status = curve_load(&loaded);
-    if (status == CURVE_INVALID) {
-        fprintf(stderr, "%s\n", curve_last_error());
-        return 1;
-    }
+    if (status == CURVE_INVALID)
+        return 1; /* the caller reports curve_last_error() once curses is down */
     EditorState st;
     memset(&st, 0, sizeof(st));
 

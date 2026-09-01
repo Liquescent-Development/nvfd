@@ -7,7 +7,7 @@ int fan_get_count(nvmlDevice_t device) {
     nvmlReturn_t r = nvmlDeviceGetNumFans(device, &count);
     if (r != NVML_SUCCESS) {
         fprintf(stderr, "Failed to get fan count: %s\n", nvmlErrorString(r));
-        return 0;
+        return -1;
     }
     return (int)count;
 }
@@ -67,6 +67,13 @@ int fan_reset_to_auto(unsigned int gpu_index) {
         return -1;
 
     int num_fans = fan_get_count(device);
+    if (num_fans < 0) {
+        /* Cannot even enumerate the fans: report it rather than "reset" zero
+         * of them and claim success. */
+        fprintf(stderr, "Error: Cannot reset fans on GPU %u\n", gpu_index);
+        return -1;
+    }
+
     int failures = 0;
     for (int i = 0; i < num_fans; i++) {
         nvmlReturn_t r = nvmlDeviceSetDefaultFanSpeed_v2(device, (unsigned int)i);

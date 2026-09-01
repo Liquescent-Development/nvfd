@@ -13,6 +13,10 @@ typedef enum {
 CurveStatus curve_load(FanCurve *curve);
 const char *curve_last_error(void);
 
+/* Loads the curve for a caller that cannot proceed without one: reports a
+ * missing or invalid file on stderr and returns -1, else 0. */
+int         curve_require(FanCurve *curve);
+
 /* Convenience wrapper: a malloc'd curve, or NULL when the file is missing or
  * invalid. An invalid file is reported on stderr. */
 FanCurve   *curve_read(void);
@@ -22,8 +26,5 @@ int         curve_edit(int temp, int speed);
 int         curve_reset(void);
 int         curve_interpolate(int temp, const FanCurve *curve);
 int         curve_apply_to_gpu(unsigned int gpu_index);
-
-/* Built-in curve used by the TUI when no curve file exists. */
-int         curve_default_interpolate(int temp);
 
 #endif /* NVFD_CURVE_H */

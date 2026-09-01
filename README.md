@@ -272,7 +272,10 @@ journal, resets the fans to auto, and exits non-zero so systemd restarts it
 (`Restart=on-failure`, 5 s). Five failures within a minute leave the unit in a
 failed state rather than restarting forever. The unit is `Type=notify` with a
 30 s watchdog, so a daemon that hangs mid-poll is killed and restarted instead
-of leaving the fans pinned at the last speed it set.
+of leaving the fans pinned at the last speed it set. On start the daemon hands
+every GPU not configured for manual or curve mode back to the driver, so a
+previous instance that died uncleanly cannot leave those fans pinned either.
+The daemon refuses to start if `WatchdogSec` is set below twice its 5 s poll.
 
 Watch it with `journalctl -u nvfd -f`.
 

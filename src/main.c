@@ -73,11 +73,11 @@ static int manual_speed(unsigned int gpu, json_t *cfg) {
     if (!json_is_integer(speed))
         daemon_dief("GPU %u: manual mode without an integer \"speed\" in %s",
                     gpu, NVFD_CONFIG_FILE);
-    int value = (int)json_integer_value(speed);
+    json_int_t value = json_integer_value(speed);
     if (value < FAN_SPEED_MIN || value > FAN_SPEED_MAX)
-        daemon_dief("GPU %u: manual speed %d is outside %d-%d",
-                    gpu, value, FAN_SPEED_MIN, FAN_SPEED_MAX);
-    return value;
+        daemon_dief("GPU %u: manual speed %lld is outside %d-%d",
+                    gpu, (long long)value, FAN_SPEED_MIN, FAN_SPEED_MAX);
+    return (int)value;
 }
 
 /* Fan speed for a GPU in curve mode, from its current temperature. */
@@ -91,11 +91,35 @@ static int curve_speed(unsigned int gpu, const FanCurve *curve) {
     return curve_interpolate(temp, curve);
 }
 
+/* systemd passes the configured WatchdogSec in microseconds. Pinging once per
+ * poll only works if the poll interval leaves margin under it. */
+static void check_watchdog_interval(void) {
+    const char *usec = getenv("WATCHDOG_USEC");
+    if (!usec || !*usec)
+        return;
+    char *end;
+    errno = 0;
+    unsigned long long watchdog_usec = strtoull(usec, &end, 10);
+    if (errno != 0 || end == usec || *end != '\0')
+        daemon_dief("WATCHDOG_USEC=\"%s\" is not a number", usec);
+    unsigned long long required_usec = 2ULL * POLL_INTERVAL_SEC * 1000000ULL;
+    if (watchdog_usec < required_usec)
+        daemon_dief("WatchdogSec is %llu us but the %ds poll needs at least %llu us",
+                    watchdog_usec, POLL_INTERVAL_SEC, required_usec);
+}
+
 static void daemon_loop(void) {
-    int prev_managed[MAX_GPU_COUNT] = {0};
+    /* Nothing is known about the fan state a previous instance left behind
+     * (it may have died without resetting), so the first poll hands every
+     * GPU that is not ours to manage back to the driver. */
+    int prev_managed[MAX_GPU_COUNT];
+    for (unsigned int i = 0; i < MAX_GPU_COUNT; i++)
+        prev_managed[i] = 1;
+    int first_poll = 1;
 
     printf("Entering daemon mode (polling every %ds)...\n", POLL_INTERVAL_SEC);
     openlog("nvfd", LOG_PID, LOG_DAEMON);
+    check_watchdog_interval();
     notify_or_die("READY=1");
 
     while (keep_running) {
@@ -126,8 +150,15 @@ static void daemon_loop(void) {
             if (!mode || strcmp(mode, "auto") == 0) {
                 if (prev_managed[i]) {
                     syslog(LOG_INFO, "GPU %u: restoring driver fan control", i);
-                    if (fan_reset_to_auto(i) != 0)
-                        daemon_dief("GPU %u: failed to restore driver fan control", i);
+                    if (fan_reset_to_auto(i) != 0) {
+                        if (!first_poll)
+                            daemon_dief("GPU %u: failed to restore driver fan control", i);
+                        /* Startup sweep of a GPU this instance never touched:
+                         * a card without controllable fans lands here, and
+                         * that must not stop the daemon managing the others. */
+                        syslog(LOG_WARNING, "GPU %u: could not hand fans to the driver "
+                                            "at startup; continuing", i);
+                    }
                     prev_managed[i] = 0;
                 }
                 continue;
@@ -157,6 +188,7 @@ static void daemon_loop(void) {
         }
 
         json_decref(root);
+        first_poll = 0;
         notify_or_die("WATCHDOG=1");
         sleep(POLL_INTERVAL_SEC);
     }
@@ -177,17 +209,7 @@ static void daemon_loop(void) {
 /* Enabling curve mode is only meaningful if the curve can actually be loaded. */
 static int require_curve(void) {
     FanCurve curve;
-    CurveStatus status = curve_load(&curve);
-    if (status == CURVE_MISSING) {
-        fprintf(stderr, "%s does not exist; run 'nvfd curve reset' to create it.\n",
-                NVFD_CURVE_FILE);
-        return -1;
-    }
-    if (status == CURVE_INVALID) {
-        fprintf(stderr, "%s\n", curve_last_error());
-        return -1;
-    }
-    return 0;
+    return curve_require(&curve);
 }
 
 static int set_gpu_mode(unsigned int gpu, const char *mode, int speed) {
@@ -229,7 +251,10 @@ int main(int argc, char *argv[]) {
     }
 
     /* Migrate old config files if present */
-    config_migrate();
+    if (config_migrate() != 0) {
+        gpu_shutdown();
+        return 1;
+    }
 
     signal(SIGTERM, signal_handler);
     signal(SIGINT, signal_handler);
@@ -279,11 +304,14 @@ int main(int argc, char *argv[]) {
             }
         } else if (argc == 3) {
             if (strcmp(argv[2], "show") == 0) {
-                display_fan_curve();
+                rc = display_fan_curve();
             } else if (strcmp(argv[2], "edit") == 0) {
                 rc = config_ensure_dir();
-                if (rc == 0)
+                if (rc == 0) {
                     rc = editor_run();
+                    if (rc != 0)
+                        fprintf(stderr, "%s\n", curve_last_error());
+                }
             } else if (strcmp(argv[2], "reset") == 0) {
                 rc = config_ensure_dir();
                 if (rc == 0)
