@@ -9,8 +9,11 @@
  * functions we call is sufficient. Signatures and enum values match nvml.h
  * from CUDA 12.x; they are part of the ABI and do not change.
  *
- * Minimum driver: R520 (introduced nvmlDeviceSetFanControlPolicy and
- * nvmlDeviceSetDefaultFanSpeed_v2).
+ * Minimum driver: R520, the first branch whose libnvidia-ml.so.1 exports
+ * every symbol below. nvmlDeviceSetFanSpeed_v2 / SetDefaultFanSpeed_v2
+ * appeared in R515; nvmlDeviceSetFanControlPolicy in 520.61.05 (backported
+ * to 515.105.01). Per `nm -D` on the NVIDIA rhel8 repo builds of 515.43.04,
+ * 515.105.01 and 520.61.05.
  */
 #ifndef NVFD_NVML_API_H
 #define NVFD_NVML_API_H
