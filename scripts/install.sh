@@ -59,15 +59,24 @@ echo "Installing dependencies..."
 case "$OS" in
     "Ubuntu"|"Ubuntu "*|"Debian GNU/Linux"|"Debian")
         apt-get update
-        apt-get install -y build-essential libjansson-dev libncursesw5-dev nvidia-cuda-toolkit
+        apt-get install -y build-essential libjansson-dev libncursesw5-dev
         ;;
     "Rocky Linux"|"CentOS Linux"|"Red Hat Enterprise Linux"|"Fedora"|"Fedora Linux")
         dnf install -y gcc make jansson-devel ncurses-devel
         ;;
     *)
-        echo "Warning: Unsupported OS ($OS). Ensure gcc, make, libjansson-dev, libncurses-dev, and NVML headers are installed."
+        echo "Warning: Unsupported OS ($OS). Ensure gcc, make, libjansson-dev and libncurses-dev are installed."
         ;;
 esac
+
+# NVML comes from the NVIDIA driver, never from a CUDA toolkit package. Refuse
+# to build, rather than pull in a toolkit that could replace the driver, if the
+# driver library is not present.
+if ! ldconfig -p | grep -q 'libnvidia-ml\.so\.1 '; then
+    echo "ERROR: libnvidia-ml.so.1 not found in the dynamic linker cache." >&2
+    echo "       Install the NVIDIA driver (R520 or newer) before installing NVFD." >&2
+    exit 1
+fi
 
 # Stop old service if running
 if systemctl is-active --quiet infinirc-gpu-fan-control.service 2>/dev/null; then
@@ -101,9 +110,10 @@ make clean && make
 echo "Installing..."
 make install
 
-# Run config migration
+# Run config migration. This also proves the installed binary can initialise
+# NVML on this host; if it cannot, the daemon would not work either.
 echo "Checking for config migration..."
-/usr/local/bin/nvfd list >/dev/null 2>&1 || true
+/usr/local/bin/nvfd list
 
 # Remove old alias if present
 if grep -q 'alias igfc=' /etc/bash.bashrc 2>/dev/null; then
