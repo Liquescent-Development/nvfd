@@ -2,8 +2,6 @@
 #include "fan.h"
 #include "gpu.h"
 
-#define FAN_SPEED_MIN 30
-
 int fan_get_count(nvmlDevice_t device) {
     unsigned int count = 0;
     nvmlReturn_t r = nvmlDeviceGetNumFans(device, &count);
@@ -25,8 +23,8 @@ int fan_get_speed(nvmlDevice_t device, unsigned int fan) {
 int fan_set_speed(nvmlDevice_t device, unsigned int fan, unsigned int speed) {
     if (speed < FAN_SPEED_MIN)
         speed = FAN_SPEED_MIN;
-    if (speed > 100)
-        speed = 100;
+    if (speed > FAN_SPEED_MAX)
+        speed = FAN_SPEED_MAX;
     nvmlReturn_t r = nvmlDeviceSetFanSpeed_v2(device, fan, speed);
     if (r != NVML_SUCCESS) {
         fprintf(stderr, "Failed to set fan %u speed: %s\n", fan, nvmlErrorString(r));
@@ -90,7 +88,11 @@ int fan_reset_to_auto(unsigned int gpu_index) {
     return failures;
 }
 
-void fan_reset_all_to_auto(void) {
-    for (unsigned int i = 0; i < device_count; i++)
-        fan_reset_to_auto(i);
+int fan_reset_all_to_auto(void) {
+    int failures = 0;
+    for (unsigned int i = 0; i < device_count; i++) {
+        if (fan_reset_to_auto(i) != 0)
+            failures++;
+    }
+    return failures;
 }

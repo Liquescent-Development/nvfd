@@ -44,8 +44,12 @@ void display_help(void) {
     printf("+----------------------------------+-------------------------------------------+\n");
 }
 
-void display_status(void) {
+int display_status(void) {
     json_t *root = config_read();
+    if (!root) {
+        fprintf(stderr, "%s\n", config_last_error());
+        return -1;
+    }
 
     printf("\n==================================================\n");
     printf("NVFD v%s - GPU Status\n", NVFD_VERSION);
@@ -93,6 +97,7 @@ void display_status(void) {
     }
 
     json_decref(root);
+    return 0;
 }
 
 void display_list_gpus(void) {

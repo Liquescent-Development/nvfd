@@ -79,6 +79,13 @@ static void dashboard_refresh_data(DashboardState *st) {
     getmaxyx(stdscr, st->term_rows, st->term_cols);
 
     json_t *root = config_read();
+    if (!root) {
+        /* The config went bad underneath a running dashboard; there is no
+         * sane state left to display. */
+        endwin();
+        fprintf(stderr, "%s\n", config_last_error());
+        exit(EXIT_FAILURE);
+    }
 
     for (unsigned int i = 0; i < st->gpu_count; i++) {
         GpuData *g = &st->gpus[i];
